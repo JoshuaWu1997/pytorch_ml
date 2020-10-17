@@ -4,6 +4,7 @@
 @Date   :16/10/2020
 """
 import torch
+import torch.utils.data as Data
 import numpy as np
 import random
 
@@ -24,6 +25,14 @@ class TSNE_NN(torch.nn.Module):
         return x_probs, self.X
 
 
+def tsne_loss(y, x):
+    x_pdist = torch.exp(-torch.pdist(x))
+    x_pdist /= x_pdist.sum()
+    y_pdist = 1 / (1 + torch.pdist(y))
+    y_pdist /= y_pdist.sum()
+    return torch.sum(y_pdist * (torch.log(y_pdist / x_pdist)))
+
+
 class TSNE:
     def __init__(self, n_components=2, perplexity=30, lr=1e-3, n_iter=10000):
         self.n_components = n_components
@@ -33,20 +42,24 @@ class TSNE:
         self.model = None
 
     def fit(self, X):
-        Y_pdist = torch.pdist(X)
-        Y_pdist = torch.exp(-Y_pdist)
-        Y_probs = Y_pdist / Y_pdist.sum()
+        dataset = Data.TensorDataset(X, X)
+        loader = Data.DataLoader(
+            dataset=dataset,
+            batch_size=64,
+            shuffle=True
+        )
         self.model = TSNE_NN(X.shape[0], self.n_components).to(device)
-        criterion = torch.nn.KLDivLoss(reduction='mean')
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
         for t in range(self.n_iter):
-            y_pred, _ = self.model(X)
-            loss = criterion(y_pred, Y_probs)
-            if t % 1000 == 999:
-                print(t, loss.item())
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            for step, (batch_x, batch_y) in enumerate(loader):
+                y_pred, _ = self.model(batch_x)
+                loss = tsne_loss(y_pred, batch_y)
+                if t % 1000 == 999:
+                    print(t, loss.item())
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+            print(t, loss.item())
 
     def fit_transform(self, X):
         self.fit(X)
