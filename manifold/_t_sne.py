@@ -1,12 +1,10 @@
 """
-@File   :t_sne.py
+@File   :_t_sne.py
 @Author :JohsuaWu1997
 @Date   :16/10/2020
 """
 import torch
 import torch.utils.data as Data
-import numpy as np
-import random
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -65,12 +63,3 @@ class TSNE:
         self.fit(X)
         _, X_embedded = self.model(X)
         return X_embedded.detach().clone()
-
-
-if __name__ == '__main__':
-    X = torch.randn(100, 20).to(device)
-    X_embedded = TSNE(n_components=2).fit_transform(X).cpu().numpy()
-    import matplotlib.pyplot as plt
-
-    plt.scatter(X_embedded[:, 0], X_embedded[:, 1])
-    plt.show()
