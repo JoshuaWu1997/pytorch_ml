@@ -10,19 +10,6 @@ import random
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-def _k_init(X, n_clusters, init):
-    # 1. Randomly choose clusters
-    centers = torch.zeros((n_clusters, X.shape[1]), device=device)
-    dist = torch.zeros((n_clusters, X.shape[0]), device=device)
-    centers[0] = X.index_select(0, init)
-    dist[0] = (centers[0] - X).norm(dim=1)
-    for i in range(1, n_clusters):
-        select = torch.argmax(torch.min(dist[:i], dim=0).values)
-        centers[i] = X.index_select(0, select)
-        dist[i] = (centers[i] - X).norm(dim=1)
-    return centers
-
-
 def _update_centers(X, labels, centers):
     select = torch.zeros((centers.shape[0], X.shape[0]), device=device)
     select[labels, torch.arange(X.shape[0])] = 1
@@ -39,6 +26,8 @@ class KMeans:
         self.n_clusters = n_clusters
         self.random_state = random_state
         self.n_init = n_init
+        self.n_samples = None
+        self.n_features = None
         self.max_iter = max_iter
         self.tol = tol
         self.labels_ = None
@@ -47,37 +36,53 @@ class KMeans:
         np.random.seed(self.random_state)
         random.seed(self.random_state)
 
+    def _k_init(self, X):
+        select = torch.randint(X.shape[0], (self.n_init,), device=device)
+        centers = torch.zeros((self.n_clusters, self.n_init, self.n_features), device=device)
+        dist = torch.zeros((self.n_clusters, self.n_init, self.n_samples), device=device)
+
+        if self.n_init * self.n_clusters > self.n_samples:
+            X_dist = torch.cdist(X, X)
+
+        for i in range(self.n_clusters):
+            centers[i] = X.index_select(0, select)
+            if self.n_init * self.n_clusters > self.n_samples:
+                dist[i] = torch.index_select(X_dist, 0, select)
+            else:
+                dist[i] = torch.cdist(centers[i], X)
+            if i == 0:
+                minimum = dist[0]
+            else:
+                minimum = torch.min(dist[i], minimum)
+            select = torch.argmax(minimum, dim=1)
+        return centers.transpose(0, 1)
+
     def fit(self, X):
-        inits = torch.randint(X.shape[0], (self.n_init,), device=device)
-        best_inertia = None
-        best_cluster = 0
+        self.n_samples = X.shape[0]
+        self.n_features = X.shape[1]
 
-        for init in inits:
-            # 1. Randomly choose clusters
-            centers = _k_init(X, self.n_clusters, init)
+        centers = self._k_init(X)
 
-            for _iter in range(self.max_iter):
-                # 2a. Assign labels based on closest center
-                labels = torch.argmin(torch.cdist(X, centers), dim=1)
+        x = torch.arange(self.n_init, device=device).repeat_interleave(self.n_samples)
+        y = torch.arange(self.n_samples, device=device).repeat(self.n_init)
+        for _iter in range(self.max_iter):
+            labels = torch.argmin(torch.cdist(centers, X), dim=1)
+            select = torch.zeros(self.n_init, self.n_clusters, self.n_samples, device=device)
+            select[x, labels.view(-1), y] = 1
+            new_centers = torch.matmul(select, X) / select.sum(dim=2, keepdim=True)
+            # new_centers = torch.where(new_centers.isnan(), centers, new_centers)
+            select = select.sum(dim=2, keepdim=True).expand(self.n_init, self.n_clusters, self.n_features)
+            new_centers = torch.where(select > 0, new_centers, centers)
 
-                # 2b. Find new centers from means of points
-                new_centers = _update_centers(X, labels, centers)
+            if ((new_centers - centers).norm(dim=2) < self.tol).sum() == centers.shape[0] * centers.shape[1]:
+                break
+            centers = new_centers.detach().clone()
 
-                # 2c. Check for convergence
-                if centers.shape[0] == new_centers.shape[0]:
-                    if ((new_centers - centers).norm(dim=1) < self.tol).sum() == centers.shape[0]:
-                        break
-                centers = new_centers
-
-            inertia = _label_inertia(X, labels, centers)
-            if (
-                    best_inertia is None or best_cluster < centers.shape[0] or
-                    (inertia < best_inertia and best_cluster == centers.shape[0])
-            ):
-                best_inertia = inertia.clone().detach()
-                best_cluster = centers.shape[0]
-                self.labels_ = labels.clone().detach()
-                self.centers_ = centers.clone().detach()
+        inertia = torch.stack([
+            (X - torch.index_select(centers[i], 0, labels[i])).norm(dim=1).mean() for i in range(self.n_init)
+        ])
+        select = torch.argmin(inertia)
+        self.labels_ = labels[select]
 
     def fit_predict(self, X, cuda=False):
         self.fit(X)
