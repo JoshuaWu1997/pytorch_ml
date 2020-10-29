@@ -79,8 +79,8 @@ class KMeans:
             centers = new_centers.detach().clone()
 
         inertia = torch.stack([
-            (X - torch.index_select(centers[i], 0, labels[i])).norm(dim=1).mean() for i in range(self.n_init)
-        ])
+            (X - torch.index_select(centers[i], 0, labels[i])) for i in range(self.n_init)
+        ]).norm(dim=[1, 2])
         select = torch.argmin(inertia)
         self.labels_ = labels[select]
 
