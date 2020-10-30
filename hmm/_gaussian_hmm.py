@@ -23,24 +23,30 @@ class HMMNet(torch.nn.Module):
         return out, probs
 
 
+def KLDivLoss(y_pred, y_true):
+    loss = (y_pred * (y_pred / y_true).log()).norm(dim=1).mean()
+    return loss
+
+
 class GaussianHMM:
     def __init__(self, n_components):
         self.n_components = n_components
 
-    def fit(self, X, y, n_iter=5000, lr=0.0001):  # (n, d,)
+    def fit(self, X, y, n_iter=5000, lr=0.001):  # (n, d,)
         dataset = Data.TensorDataset(X, y)
         loader = Data.DataLoader(
             dataset=dataset,
-            batch_size=64,
+            batch_size=128,
             shuffle=True
         )
         self.model = HMMNet(self.n_components).to(device)
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
-        criterion = torch.nn.MSELoss()
+        # criterion = torch.nn.MSELoss()
+        # criterion = torch.nn.KLDivLoss()
         for t in range(n_iter):
             for step, (batch_x, batch_y) in enumerate(loader):
                 y_pred, _ = self.model(batch_x)
-                loss = criterion(y_pred, batch_y)
+                loss = KLDivLoss(y_pred, batch_y)
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
@@ -57,15 +63,15 @@ if __name__ == '__main__':
     y = []
     transient = np.random.rand(5, 5)
     transient /= transient.sum(axis=1)
-    for j in range(10):
+    for j in range(100):
         pi = np.random.rand(5, )
         pi = pi / pi.sum()
         X.append(pi.tolist())
         for i in range(10):
-            pi = pi @ transient + np.random.randn(5, ) * 0.1
+            pi = pi @ transient + np.random.rand(5, ) * 0.1
             X.append(pi.tolist())
             y.append(pi.tolist())
-        pi = pi @ transient + np.random.randn(5, ) * 0.1
+        pi = pi @ transient + np.random.rand(5, ) * 0.1
         y.append(pi.tolist())
     X = torch.tensor(X, device=device)
     y = torch.tensor(y, device=device)
